@@ -2,7 +2,7 @@
 <html>
   <head>
     <meta charset="utf-8">
-    <title>Vijalakshmi Chicken Center - Dashboard</title>
+    <title>Vijalakshmi Chicken Center - Desktop Dashboard</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
@@ -19,31 +19,48 @@
           <h2>Today's Summary</h2>
           <div id="summary">Loading...</div>
           <div class="price-box">
-            <h3>Today's Price</h3>
+            <h3>Today's Price (site-wide)</h3>
             <div>Price per hen: <span id="priceHen">-</span></div>
-            <div>Price per kg (broiler): <span id="priceKg">-</span></div>
+            <div>Price per kg (whole): <span id="priceKg">-</span></div>
+            <div>Price per kg (skinless): <span id="priceKgSkin">-</span></div>
             <form id="priceForm">
               <label>Price per hen <input type="number" step="0.01" name="price_per_hen"></label>
-              <label>Price per kg <input type="number" step="0.01" name="price_per_kg"></label>
+              <label>Price per kg (whole) <input type="number" step="0.01" name="price_per_kg"></label>
+              <label>Price per kg (skinless) <input type="number" step="0.01" name="price_per_kg_skinless"></label>
               <button type="submit">Set Today's Price</button>
             </form>
           </div>
         </div>
 
         <div class="card">
-          <h2>Add Birds</h2>
-          <form id="addBirdForm">
-            <label>Type
-              <select name="type">
-                <option value="hen">Hen</option>
-                <option value="broiler">Broiler</option>
+          <h2>New Sale / Entry</h2>
+
+          <form id="saleForm">
+            <label>Customer Name <input type="text" id="customerName"></label>
+
+            <label>Sale type:
+              <select id="saleMode" name="sale_mode">
+                <option value="per_bird">Per Bird</option>
+                <option value="per_kg">Whole / Per kg</option>
+                <option value="skinless">Skinless (per kg)</option>
+                <option value="mixed">Mixed</option>
               </select>
             </label>
-            <label>Qty <input type="number" name="qty" value="1" min="1"></label>
-            <label>Cost per hen <input type="number" name="cost_per_hen" step="0.01"></label>
-            <label>Cost per kg <input type="number" name="cost_per_kg" step="0.01"></label>
-            <label>Weight (kg) <input type="number" name="weight_kg" step="0.01"></label>
-            <button type="submit">Add</button>
+
+            <label>Birds (qty) <input type="number" id="saleQty" name="qty" min="0" value="0"></label>
+            <label>Weight (kg) <input type="number" id="saleWeight" name="weight_kg" step="0.01" min="0" value="0"></label>
+            <label>Skinless weight (kg) <input type="number" id="saleSkinless" name="skinless_kg" step="0.01" min="0" value="0"></label>
+
+            <label>Price per hen (₹) <input type="number" id="pricePerHen" name="price_per_hen" step="0.01" min="0"></label>
+            <label>Price per kg (whole) (₹) <input type="number" id="pricePerKg" name="price_per_kg" step="0.01" min="0"></label>
+            <label>Price per kg (skinless) (₹) <input type="number" id="pricePerKgSkin" name="price_per_kg_skinless" step="0.01" min="0"></label>
+
+            <div class="total-row"><strong>Total: ₹ <span id="computedTotal">0.00</span></strong></div>
+
+            <div class="form-actions">
+              <button type="button" id="submitSale">Save Sale</button>
+              <button type="button" id="resetSale">Reset</button>
+            </div>
           </form>
         </div>
 
@@ -56,6 +73,7 @@
             <button id="deceasedSelected">Mark Deceased</button>
           </div>
         </div>
+
       </section>
     </main>
 
@@ -64,21 +82,23 @@
     </footer>
 
     <script>
+      // Summary and UI functions
       async function loadSummary() {
         const res = await fetch('/api/summary/today');
         const data = await res.json();
-        // show a nicer summary
         const lines = [];
         lines.push(`Hens sold today (qty): ${data.hens_sold_today_qty}`);
         lines.push(`Broilers sold today (kg): ${data.broilers_sold_kg_today}`);
+        lines.push(`Skinless sold today (kg): ${data.skinless_kg_sold_today}`);
         lines.push(`Chickens left (alive): ${data.chickens_left}`);
         lines.push(`Deceased hens cost today: ${data.deceased_hens_cost_today}`);
         lines.push(`Avg cost per hen: ${data.avg_cost_per_hen}`);
         lines.push(`Avg cost per kg (broiler): ${data.avg_cost_per_kg_broiler}`);
-        lines.push(`Today's earnings (computed): ${data.todays_earnings}`);
+        lines.push(`Today's earnings (computed): ₹ ${data.todays_earnings}`);
         document.getElementById('summary').innerText = lines.join('\n');
         document.getElementById('priceHen').innerText = data.price_per_hen || 0;
         document.getElementById('priceKg').innerText = data.price_per_kg || 0;
+        document.getElementById('priceKgSkin').innerText = data.price_per_kg_skinless || 0;
       }
 
       async function fetchPrice() {
@@ -86,8 +106,10 @@
         const p = await r.json();
         document.querySelector('#priceForm [name=price_per_hen]').value = p.price_per_hen || '';
         document.querySelector('#priceForm [name=price_per_kg]').value = p.price_per_kg || '';
+        document.querySelector('#priceForm [name=price_per_kg_skinless]').value = p.price_per_kg_skinless || '';
         document.getElementById('priceHen').innerText = p.price_per_hen || 0;
         document.getElementById('priceKg').innerText = p.price_per_kg || 0;
+        document.getElementById('priceKgSkin').innerText = p.price_per_kg_skinless || 0;
       }
 
       async function loadBirds() {
@@ -118,29 +140,65 @@
         container.appendChild(table);
       }
 
-      document.getElementById('addBirdForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const form = e.target;
-        const body = {
-          type: form.type.value,
-          qty: Number(form.qty.value) || 1,
-          cost_per_hen: form.cost_per_hen.value ? Number(form.cost_per_hen.value) : null,
-          cost_per_kg: form.cost_per_kg.value ? Number(form.cost_per_kg.value) : null,
-          weight_kg: form.weight_kg.value ? Number(form.weight_kg.value) : null
-        };
-        await fetch('/api/birds', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-        form.reset();
-        form.qty.value = 1;
-        await loadBirds();
-        await loadSummary();
-        await fetchPrice();
+      // Sale computation
+      function computeSaleTotal() {
+        const mode = document.getElementById('saleMode').value;
+        const qty = Number(document.getElementById('saleQty').value) || 0;
+        const weight = Number(document.getElementById('saleWeight').value) || 0;
+        const skinless = Number(document.getElementById('saleSkinless').value) || 0;
+        const pHen = Number(document.getElementById('pricePerHen').value) || 0;
+        const pKg = Number(document.getElementById('pricePerKg').value) || 0;
+        const pKgSkin = Number(document.getElementById('pricePerKgSkin').value) || 0;
+
+        let total = 0;
+        if ((mode === 'per_bird' || mode === 'mixed') && qty > 0) total += qty * pHen;
+        if ((mode === 'per_kg' || mode === 'mixed') && weight > 0) total += weight * pKg;
+        if ((mode === 'skinless' || mode === 'mixed') && skinless > 0) total += skinless * pKgSkin;
+        document.getElementById('computedTotal').innerText = total.toFixed(2);
+        return total;
+      }
+
+      ['saleMode','saleQty','saleWeight','saleSkinless','pricePerHen','pricePerKg','pricePerKgSkin'].forEach(id=>{
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', computeSaleTotal);
       });
 
+      document.getElementById('submitSale').addEventListener('click', async () => {
+        const body = {
+          bird_type: 'hen',
+          sale_mode: document.getElementById('saleMode').value,
+          qty: Number(document.getElementById('saleQty').value) || 0,
+          weight_kg: Number(document.getElementById('saleWeight').value) || 0,
+          skinless_kg: Number(document.getElementById('saleSkinless').value) || 0,
+          price_per_hen: Number(document.getElementById('pricePerHen').value) || null,
+          price_per_kg: Number(document.getElementById('pricePerKg').value) || null,
+          price_per_kg_skinless: Number(document.getElementById('pricePerKgSkin').value) || null
+        };
+        body.total_amount = computeSaleTotal();
+        const r = await fetch('/api/sales', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        const j = await r.json();
+        if (j.success) {
+          alert('Sale saved ₹' + j.total_amount);
+          document.getElementById('saleForm').reset();
+          document.getElementById('computedTotal').innerText = '0.00';
+          loadBirds();
+          loadSummary();
+        } else {
+          alert('Error: ' + (j.error || 'unknown'));
+        }
+      });
+
+      document.getElementById('resetSale').addEventListener('click', () => {
+        document.getElementById('saleForm').reset();
+        document.getElementById('computedTotal').innerText = '0.00';
+      });
+
+      // existing birds list actions
       document.getElementById('sellSelected').addEventListener('click', async () => {
         const checked = Array.from(document.querySelectorAll('#birdsList input[type=checkbox]:checked'));
         if (!checked.length) return alert('Select birds to sell');
         const ids = checked.map(c => Number(c.dataset.id));
-        const total = Number(document.getElementById('saleAmount').value);
+        const total = Number(document.getElementById('saleAmount').value) || 0;
         if (!total) return alert('Enter total sale amount');
         const body = { bird_type: 'hen', bird_ids: ids, total_amount: total, qty: ids.length };
         await fetch('/api/sales', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
@@ -162,7 +220,8 @@
         const form = e.target;
         const body = {
           price_per_hen: form.price_per_hen.value ? Number(form.price_per_hen.value) : 0,
-          price_per_kg: form.price_per_kg.value ? Number(form.price_per_kg.value) : 0
+          price_per_kg: form.price_per_kg.value ? Number(form.price_per_kg.value) : 0,
+          price_per_kg_skinless: form.price_per_kg_skinless.value ? Number(form.price_per_kg_skinless.value) : 0
         };
         await fetch('/api/price', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
         await fetchPrice();
@@ -173,7 +232,6 @@
       loadSummary();
       loadBirds();
       fetchPrice();
-      // refresh periodically
       setInterval(() => { loadSummary(); loadBirds(); fetchPrice(); }, 15000);
     </script>
   </body>
