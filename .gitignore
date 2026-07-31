@@ -1,0 +1,5 @@
+node_modules/
+.poultry_db
+poultry.db
+.env
+npm-debug.log

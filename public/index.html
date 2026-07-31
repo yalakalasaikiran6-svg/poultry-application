@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>Poultry Summary</title></head>
+  <body>
+    <h1>Today's Poultry Summary</h1>
+    <pre id="summary">Loading...</pre>
+    <script>
+      async function load() {
+        const r = await fetch('/api/summary/today');
+        const s = await r.json();
+        document.getElementById('summary').innerText = JSON.stringify(s, null, 2);
+      }
+      load();
+    </script>
+  </body>
+</html>
