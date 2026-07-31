@@ -23,6 +23,21 @@ const app = express();
 app.use(bodyParser.json());
 app.use(express.static('public'));
 
+// Get list of birds (optional filters)
+app.get('/api/birds', (req, res) => {
+  const { status, type } = req.query;
+  const conditions = [];
+  const params = [];
+  if (status) { conditions.push('status = ?'); params.push(status); }
+  if (type) { conditions.push('type = ?'); params.push(type); }
+  const where = conditions.length ? ('WHERE ' + conditions.join(' AND ')) : '';
+  const sql = `SELECT id, type, batch, status, weight_kg, cost_per_hen, cost_per_kg, added_at, sold_at, sold_price, deceased_at FROM birds ${where} ORDER BY added_at DESC`;
+  db.all(sql, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
 // Add birds (single or multiple)
 app.post('/api/birds', (req, res) => {
   const { type, batch, qty = 1, weight_kg = null, cost_per_hen = null, cost_per_kg = null } = req.body;
@@ -39,16 +54,33 @@ app.post('/api/birds', (req, res) => {
   });
 });
 
-// Record sale
+// Record sale (optionally mark specific bird ids as sold)
 app.post('/api/sales', (req, res) => {
-  const { bird_type, qty, total_kg = null, price_per_kg = null, total_amount } = req.body;
+  const { bird_type, qty, total_kg = null, price_per_kg = null, total_amount, bird_ids = [] } = req.body;
   if (!bird_type || total_amount == null) return res.status(400).json({ error: 'bird_type and total_amount required' });
   const date = new Date().toISOString();
   db.run(`INSERT INTO sales (date,bird_type,qty,total_kg,price_per_kg,total_amount) VALUES (?,?,?,?,?,?)`,
     [date, bird_type, qty, total_kg, price_per_kg, total_amount],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      res.json({ success: true, saleId: this.lastID });
+      const saleId = this.lastID;
+      // If bird_ids provided, mark them sold and set sold_at and sold_price (distribute total_amount equally)
+      if (Array.isArray(bird_ids) && bird_ids.length > 0) {
+        const perBird = total_amount / bird_ids.length;
+        const now = new Date().toISOString();
+        const stmt = db.prepare(`UPDATE birds SET status='sold', sold_at=?, sold_price=? WHERE id = ?`);
+        db.serialize(() => {
+          db.run('BEGIN TRANSACTION');
+          bird_ids.forEach(id => {
+            stmt.run(now, perBird, id);
+          });
+          db.run('COMMIT');
+          stmt.finalize();
+          res.json({ success: true, saleId, updatedBirds: bird_ids.length });
+        });
+      } else {
+        res.json({ success: true, saleId });
+      }
     }
   );
 });

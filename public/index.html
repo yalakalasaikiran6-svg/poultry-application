@@ -1,16 +1,132 @@
 <!doctype html>
 <html>
-  <head><meta charset="utf-8"><title>Poultry Summary</title></head>
+  <head>
+    <meta charset="utf-8">
+    <title>Poultry Dashboard</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
   <body>
-    <h1>Today's Poultry Summary</h1>
-    <pre id="summary">Loading...</pre>
+    <header>
+      <h1>Poultry Owner Dashboard</h1>
+    </header>
+    <main>
+      <section class="grid">
+        <div class="card">
+          <h2>Today's Summary</h2>
+          <div id="summary">Loading...</div>
+        </div>
+
+        <div class="card">
+          <h2>Add Birds</h2>
+          <form id="addBirdForm">
+            <label>Type
+              <select name="type">
+                <option value="hen">Hen</option>
+                <option value="broiler">Broiler</option>
+              </select>
+            </label>
+            <label>Qty <input type="number" name="qty" value="1" min="1"></label>
+            <label>Cost per hen <input type="number" name="cost_per_hen" step="0.01"></label>
+            <label>Cost per kg <input type="number" name="cost_per_kg" step="0.01"></label>
+            <label>Weight (kg) <input type="number" name="weight_kg" step="0.01"></label>
+            <button type="submit">Add</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <h2>Birds (select to sell or mark deceased)</h2>
+          <div id="birdsList">Loading...</div>
+          <div class="actions">
+            <label>Total amount for selected sale <input id="saleAmount" type="number" step="0.01"></label>
+            <button id="sellSelected">Sell Selected</button>
+            <button id="deceasedSelected">Mark Deceased</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <small>Simple poultry tracking app</small>
+    </footer>
+
     <script>
-      async function load() {
-        const r = await fetch('/api/summary/today');
-        const s = await r.json();
-        document.getElementById('summary').innerText = JSON.stringify(s, null, 2);
+      async function loadSummary() {
+        const res = await fetch('/api/summary/today');
+        const data = await res.json();
+        document.getElementById('summary').innerText = JSON.stringify(data, null, 2);
       }
-      load();
+
+      async function loadBirds() {
+        const res = await fetch('/api/birds');
+        const birds = await res.json();
+        const container = document.getElementById('birdsList');
+        if (!birds.length) { container.innerHTML = '<p>No birds yet.</p>'; return; }
+        const table = document.createElement('table');
+        const thead = document.createElement('thead');
+        thead.innerHTML = '<tr><th></th><th>ID</th><th>Type</th><th>Status</th><th>Cost</th><th>Weight</th><th>Added</th></tr>';
+        table.appendChild(thead);
+        const tbody = document.createElement('tbody');
+        birds.forEach(b => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td><input type="checkbox" data-id="${b.id}"></td>
+            <td>${b.id}</td>
+            <td>${b.type}</td>
+            <td>${b.status}</td>
+            <td>${b.cost_per_hen || b.cost_per_kg || ''}</td>
+            <td>${b.weight_kg || ''}</td>
+            <td>${b.added_at}</td>
+          `;
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        container.innerHTML = '';
+        container.appendChild(table);
+      }
+
+      document.getElementById('addBirdForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const form = e.target;
+        const body = {
+          type: form.type.value,
+          qty: Number(form.qty.value) || 1,
+          cost_per_hen: form.cost_per_hen.value ? Number(form.cost_per_hen.value) : null,
+          cost_per_kg: form.cost_per_kg.value ? Number(form.cost_per_kg.value) : null,
+          weight_kg: form.weight_kg.value ? Number(form.weight_kg.value) : null
+        };
+        await fetch('/api/birds', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        form.reset();
+        form.qty.value = 1;
+        await loadBirds();
+        await loadSummary();
+      });
+
+      document.getElementById('sellSelected').addEventListener('click', async () => {
+        const checked = Array.from(document.querySelectorAll('#birdsList input[type=checkbox]:checked'));
+        if (!checked.length) return alert('Select birds to sell');
+        const ids = checked.map(c => Number(c.dataset.id));
+        const total = Number(document.getElementById('saleAmount').value);
+        if (!total) return alert('Enter total sale amount');
+        const body = { bird_type: 'hen', bird_ids: ids, total_amount: total, qty: ids.length };
+        await fetch('/api/sales', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        await loadBirds();
+        await loadSummary();
+      });
+
+      document.getElementById('deceasedSelected').addEventListener('click', async () => {
+        const checked = Array.from(document.querySelectorAll('#birdsList input[type=checkbox]:checked'));
+        if (!checked.length) return alert('Select birds to mark deceased');
+        const ids = checked.map(c => Number(c.dataset.id));
+        await fetch('/api/deceased', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ ids }) });
+        await loadBirds();
+        await loadSummary();
+      });
+
+      // initial load
+      loadSummary();
+      loadBirds();
+      // refresh periodically
+      setInterval(() => { loadSummary(); loadBirds(); }, 15000);
     </script>
   </body>
 </html>
