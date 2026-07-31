@@ -15,13 +15,45 @@ if (!fs.existsSync(SCHEMA_FILE)) {
 
 const schema = fs.readFileSync(SCHEMA_FILE, 'utf8');
 const db = new sqlite3.Database(DB_FILE);
+// initialize base schema
 db.exec(schema, (err) => {
-  if (err) console.error('Failed to initialize DB:', err);
+  if (err) console.error('Failed to initialize DB with schema.sql:', err);
+});
+
+// ensure prices table exists
+db.exec(`CREATE TABLE IF NOT EXISTS prices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL,
+  price_per_hen REAL DEFAULT 0,
+  price_per_kg REAL DEFAULT 0,
+  updated_at TEXT DEFAULT (datetime('now','localtime'))
+);`, (err) => {
+  if (err) console.error('Failed to create prices table:', err);
 });
 
 const app = express();
 app.use(bodyParser.json());
 app.use(express.static('public'));
+
+// Get current price (latest for today if available)
+app.get('/api/price', (req, res) => {
+  const today = "DATE('now','localtime')"; // used in SQL
+  db.get(`SELECT price_per_hen, price_per_kg, date FROM prices WHERE date = DATE('now','localtime') ORDER BY id DESC LIMIT 1`, [], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.json({ price_per_hen: 0, price_per_kg: 0 });
+    res.json({ price_per_hen: row.price_per_hen || 0, price_per_kg: row.price_per_kg || 0, date: row.date });
+  });
+});
+
+// Set today's price
+app.post('/api/price', (req, res) => {
+  const { price_per_hen = 0, price_per_kg = 0 } = req.body;
+  const date = new Date().toISOString().slice(0,10); // YYYY-MM-DD
+  db.run(`INSERT INTO prices (date, price_per_hen, price_per_kg) VALUES (?,?,?)`, [date, price_per_hen, price_per_kg], function(err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ success: true, id: this.lastID });
+  });
+});
 
 // Get list of birds (optional filters)
 app.get('/api/birds', (req, res) => {
@@ -108,13 +140,17 @@ app.post('/api/deceased', (req, res) => {
   }
 });
 
-// Summary for today
+// Summary for today (updated earnings calculation using today's price table if set)
 app.get('/api/summary/today', (req, res) => {
   const results = {};
   const tasks = [
     {
-      key: 'hens_sold_today',
-      sql: `SELECT COUNT(*) as v FROM birds WHERE type='hen' AND status='sold' AND DATE(sold_at)=DATE('now','localtime')`
+      key: 'hens_sold_today_qty',
+      sql: `SELECT IFNULL(SUM(qty),0) as v FROM sales WHERE bird_type='hen' AND DATE(date)=DATE('now','localtime')`
+    },
+    {
+      key: 'broilers_sold_kg_today',
+      sql: `SELECT IFNULL(SUM(total_kg),0) as v FROM sales WHERE bird_type='broiler' AND DATE(date)=DATE('now','localtime')`
     },
     {
       key: 'chickens_left',
@@ -131,10 +167,6 @@ app.get('/api/summary/today', (req, res) => {
     {
       key: 'avg_cost_per_kg_broiler',
       sql: `SELECT IFNULL(ROUND(AVG(cost_per_kg),2),0) as v FROM birds WHERE type='broiler' AND cost_per_kg IS NOT NULL`
-    },
-    {
-      key: 'todays_earnings',
-      sql: `SELECT IFNULL(SUM(total_amount),0) as v FROM sales WHERE DATE(date)=DATE('now','localtime')`
     }
   ];
 
@@ -143,7 +175,33 @@ app.get('/api/summary/today', (req, res) => {
     db.get(t.sql, [], (err, row) => {
       results[t.key] = err ? null : row.v;
       done++;
-      if (done === tasks.length) res.json(results);
+      if (done === tasks.length) {
+        // get today's price and compute earnings
+        db.get(`SELECT price_per_hen, price_per_kg FROM prices WHERE date = DATE('now','localtime') ORDER BY id DESC LIMIT 1`, [], (err2, prow) => {
+          const price_per_hen = (prow && prow.price_per_hen) ? prow.price_per_hen : null;
+          const price_per_kg = (prow && prow.price_per_kg) ? prow.price_per_kg : null;
+
+          // if today's prices available, compute earnings as (hens_qty * price_per_hen) + (broilers_kg * price_per_kg)
+          if (price_per_hen != null || price_per_kg != null) {
+            const hensQty = Number(results['hens_sold_today_qty'] || 0);
+            const broilerKg = Number(results['broilers_sold_kg_today'] || 0);
+            const henEarnings = (price_per_hen != null) ? hensQty * price_per_hen : 0;
+            const broilerEarnings = (price_per_kg != null) ? broilerKg * price_per_kg : 0;
+            results['todays_earnings'] = Number((henEarnings + broilerEarnings).toFixed(2));
+            results['price_per_hen'] = price_per_hen || 0;
+            results['price_per_kg'] = price_per_kg || 0;
+            return res.json(results);
+          }
+
+          // fallback: sum recorded sales.total_amount for today
+          db.get(`SELECT IFNULL(SUM(total_amount),0) as v FROM sales WHERE DATE(date)=DATE('now','localtime')`, [], (err3, srow) => {
+            results['todays_earnings'] = err3 ? null : srow.v;
+            results['price_per_hen'] = 0;
+            results['price_per_kg'] = 0;
+            return res.json(results);
+          });
+        });
+      }
     });
   });
 });

@@ -2,18 +2,32 @@
 <html>
   <head>
     <meta charset="utf-8">
-    <title>Poultry Dashboard</title>
+    <title>Vijalakshmi Chicken Center - Dashboard</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <header>
-      <h1>Poultry Owner Dashboard</h1>
+    <header class="with-logo">
+      <img src="/images/logo.svg" alt="Vijalakshmi Chicken Center logo" class="logo">
+      <div class="header-text">
+        <h1>Vijalakshmi Chicken Center</h1>
+        <div class="location">Location: Parvathipuram</div>
+      </div>
     </header>
     <main>
       <section class="grid">
         <div class="card">
           <h2>Today's Summary</h2>
           <div id="summary">Loading...</div>
+          <div class="price-box">
+            <h3>Today's Price</h3>
+            <div>Price per hen: <span id="priceHen">-</span></div>
+            <div>Price per kg (broiler): <span id="priceKg">-</span></div>
+            <form id="priceForm">
+              <label>Price per hen <input type="number" step="0.01" name="price_per_hen"></label>
+              <label>Price per kg <input type="number" step="0.01" name="price_per_kg"></label>
+              <button type="submit">Set Today's Price</button>
+            </form>
+          </div>
         </div>
 
         <div class="card">
@@ -46,14 +60,34 @@
     </main>
 
     <footer>
-      <small>Simple poultry tracking app</small>
+      <small>Vijalakshmi Chicken Center — Parvathipuram</small>
     </footer>
 
     <script>
       async function loadSummary() {
         const res = await fetch('/api/summary/today');
         const data = await res.json();
-        document.getElementById('summary').innerText = JSON.stringify(data, null, 2);
+        // show a nicer summary
+        const lines = [];
+        lines.push(`Hens sold today (qty): ${data.hens_sold_today_qty}`);
+        lines.push(`Broilers sold today (kg): ${data.broilers_sold_kg_today}`);
+        lines.push(`Chickens left (alive): ${data.chickens_left}`);
+        lines.push(`Deceased hens cost today: ${data.deceased_hens_cost_today}`);
+        lines.push(`Avg cost per hen: ${data.avg_cost_per_hen}`);
+        lines.push(`Avg cost per kg (broiler): ${data.avg_cost_per_kg_broiler}`);
+        lines.push(`Today's earnings (computed): ${data.todays_earnings}`);
+        document.getElementById('summary').innerText = lines.join('\n');
+        document.getElementById('priceHen').innerText = data.price_per_hen || 0;
+        document.getElementById('priceKg').innerText = data.price_per_kg || 0;
+      }
+
+      async function fetchPrice() {
+        const r = await fetch('/api/price');
+        const p = await r.json();
+        document.querySelector('#priceForm [name=price_per_hen]').value = p.price_per_hen || '';
+        document.querySelector('#priceForm [name=price_per_kg]').value = p.price_per_kg || '';
+        document.getElementById('priceHen').innerText = p.price_per_hen || 0;
+        document.getElementById('priceKg').innerText = p.price_per_kg || 0;
       }
 
       async function loadBirds() {
@@ -99,6 +133,7 @@
         form.qty.value = 1;
         await loadBirds();
         await loadSummary();
+        await fetchPrice();
       });
 
       document.getElementById('sellSelected').addEventListener('click', async () => {
@@ -122,11 +157,24 @@
         await loadSummary();
       });
 
+      document.getElementById('priceForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const form = e.target;
+        const body = {
+          price_per_hen: form.price_per_hen.value ? Number(form.price_per_hen.value) : 0,
+          price_per_kg: form.price_per_kg.value ? Number(form.price_per_kg.value) : 0
+        };
+        await fetch('/api/price', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        await fetchPrice();
+        await loadSummary();
+      });
+
       // initial load
       loadSummary();
       loadBirds();
+      fetchPrice();
       // refresh periodically
-      setInterval(() => { loadSummary(); loadBirds(); }, 15000);
+      setInterval(() => { loadSummary(); loadBirds(); fetchPrice(); }, 15000);
     </script>
   </body>
 </html>
